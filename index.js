@@ -1,9 +1,9 @@
-const { 
-  Client, 
-  GatewayIntentBits, 
-  ActionRowBuilder, 
-  ButtonBuilder, 
-  ButtonStyle, 
+const {
+  Client,
+  GatewayIntentBits,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   PermissionsBitField,
   ModalBuilder,
   TextInputBuilder,
@@ -12,25 +12,35 @@ const {
 
 require('dotenv').config();
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+// ✅ INTENTS CORRECTOS PARA BOT REAL
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.GuildMembers
+  ]
+});
 
-// memoria temporal
 let encuesta = null;
 
-client.once('ready', () => {
+client.once('clientReady', () => {
   console.log(`✅ Bot conectado como ${client.user.tag}`);
 });
 
 client.on('interactionCreate', async interaction => {
 
-  // ======================
-  // COMANDO /encuesta
-  // ======================
+  // =========================
+  // SLASH COMMAND /encuesta
+  // =========================
   if (interaction.isChatInputCommand()) {
+
     if (interaction.commandName === 'encuesta') {
 
       if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-        return interaction.reply({ content: '❌ No tienes permisos', ephemeral: true });
+        return interaction.reply({
+          content: '❌ No tienes permisos para usar esto',
+          ephemeral: true
+        });
       }
 
       const texto = interaction.options.getString('texto');
@@ -48,43 +58,61 @@ client.on('interactionCreate', async interaction => {
       };
 
       const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('atiempo').setLabel('✅ A tiempo').setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId('tarde').setLabel('🟡 Tarde').setStyle(ButtonStyle.Warning),
-        new ButtonBuilder().setCustomId('novengo').setLabel('❌ No vengo').setStyle(ButtonStyle.Danger)
+        new ButtonBuilder()
+          .setCustomId('atiempo')
+          .setLabel('✅ A tiempo')
+          .setStyle(ButtonStyle.Success),
+
+        new ButtonBuilder()
+          .setCustomId('tarde')
+          .setLabel('🟡 Tarde')
+          .setStyle(ButtonStyle.Warning),
+
+        new ButtonBuilder()
+          .setCustomId('novengo')
+          .setLabel('❌ No vengo')
+          .setStyle(ButtonStyle.Danger)
       );
 
       await interaction.reply({
-        content: `📊 **${texto}**\n⏰ Hora: ${hora}\n${rol}`,
+        content: `📊 **${texto}**\n⏰ Hora: ${hora}\n📌 Rol: ${rol}`,
         components: [row]
       });
 
-      // ⏰ PROGRAMAR RECORDATORIO
       programarRecordatorio(interaction, encuesta);
     }
   }
 
-  // ======================
+  // =========================
   // BOTONES
-  // ======================
+  // =========================
   if (interaction.isButton()) {
 
     if (!encuesta) return;
 
     const user = interaction.user;
 
-    // eliminar de todas las listas primero (permite cambiar voto)
+    // eliminar de todas las listas (permite cambiar voto)
     encuesta.atiempo = encuesta.atiempo.filter(u => u.id !== user.id);
     encuesta.tarde = encuesta.tarde.filter(u => u.id !== user.id);
     encuesta.novengo = encuesta.novengo.filter(u => u.id !== user.id);
 
     if (interaction.customId === 'atiempo') {
       encuesta.atiempo.push(user);
-      return interaction.reply({ content: '✅ Te has puesto como A TIEMPO', ephemeral: true });
+
+      return interaction.reply({
+        content: '✅ Registrado como A TIEMPO',
+        ephemeral: true
+      });
     }
 
     if (interaction.customId === 'novengo') {
       encuesta.novengo.push(user);
-      return interaction.reply({ content: '❌ Te has puesto como NO VENGO', ephemeral: true });
+
+      return interaction.reply({
+        content: '❌ Registrado como NO VENGO',
+        ephemeral: true
+      });
     }
 
     if (interaction.customId === 'tarde') {
@@ -99,15 +127,17 @@ client.on('interactionCreate', async interaction => {
         .setStyle(TextInputStyle.Paragraph)
         .setRequired(true);
 
-      modal.addComponents(new ActionRowBuilder().addComponents(input));
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(input)
+      );
 
       await interaction.showModal(modal);
     }
   }
 
-  // ======================
-  // MODAL (motivo)
-  // ======================
+  // =========================
+  // MODAL (MOTIVO TARDE)
+  // =========================
   if (interaction.isModalSubmit()) {
 
     if (!encuesta) return;
@@ -115,38 +145,44 @@ client.on('interactionCreate', async interaction => {
     const user = interaction.user;
     const motivo = interaction.fields.getTextInputValue('motivo');
 
-    // limpiar listas
+    // limpiar otras opciones
     encuesta.atiempo = encuesta.atiempo.filter(u => u.id !== user.id);
     encuesta.novengo = encuesta.novengo.filter(u => u.id !== user.id);
 
     encuesta.tarde.push(user);
     encuesta.motivos[user.id] = motivo;
 
-    await interaction.reply({ content: '🟡 Te has puesto como TARDE', ephemeral: true });
+    await interaction.reply({
+      content: '🟡 Registrado como TARDE',
+      ephemeral: true
+    });
   }
 });
 
-// ======================
-// RECORDATORIO
-// ======================
+// =========================
+// RECORDATORIO 30 MIN ANTES
+// =========================
 function programarRecordatorio(interaction, encuesta) {
   try {
-    const [hora, minutos] = encuesta.hora.split(':').map(Number);
+
+    const [h, m] = encuesta.hora.split(':').map(Number);
 
     const ahora = new Date();
     const evento = new Date();
 
-    evento.setHours(hora);
-    evento.setMinutes(minutos);
+    evento.setHours(h);
+    evento.setMinutes(m);
     evento.setSeconds(0);
 
-    const aviso = new Date(evento.getTime() - 30 * 60000); // 30 min antes
+    const aviso = new Date(evento.getTime() - 30 * 60000);
 
-    const tiempoEspera = aviso - ahora;
+    const delay = aviso - ahora;
 
-    if (tiempoEspera <= 0) return;
+    if (delay <= 0) return;
 
     setTimeout(() => {
+
+      if (!encuesta) return;
 
       const canal = interaction.channel;
 
@@ -156,13 +192,16 @@ function programarRecordatorio(interaction, encuesta) {
       ];
 
       canal.send({
-        content: `⏰ RECORDATORIO\n${encuesta.rol}\n\nVan:\n${lista.join('\n') || 'Nadie'}`
+        content:
+          `⏰ **RECORDATORIO**\n` +
+          `${encuesta.rol}\n\n` +
+          `👥 Asistirán:\n${lista.join('\n') || 'Nadie todavía'}`
       });
 
-    }, tiempoEspera);
+    }, delay);
 
   } catch (err) {
-    console.log("Error en recordatorio:", err);
+    console.log('Error recordatorio:', err);
   }
 }
 
