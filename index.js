@@ -7,43 +7,84 @@ const {
   PermissionsBitField,
   ModalBuilder,
   TextInputBuilder,
-  TextInputStyle
+  TextInputStyle,
+  REST,
+  Routes,
+  SlashCommandBuilder
 } = require('discord.js');
 
 require('dotenv').config();
 
-// ✅ INTENTS CORRECTOS PARA BOT REAL
+// ======================
+// CLIENTE DISCORD
+// ======================
 const client = new Client({
   intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.GuildMembers
+    GatewayIntentBits.Guilds
   ]
 });
 
 let encuesta = null;
 
-client.once('clientReady', () => {
+// ======================
+// CUANDO EL BOT ESTÁ LISTO
+// ======================
+client.once('ready', async () => {
   console.log(`✅ Bot conectado como ${client.user.tag}`);
 
-  // 🟢 mantiene el proceso activo (opcional)
-  setInterval(() => {
-    console.log("bot alive");
-  }, 60000);
+  // ======================
+  // REGISTRO AUTOMÁTICO DE SLASH COMMAND
+  // ======================
+  const commands = [
+    new SlashCommandBuilder()
+      .setName('encuesta')
+      .setDescription('Crear encuesta de asistencia')
+      .addStringOption(option =>
+        option.setName('texto')
+          .setDescription('Texto de la encuesta')
+          .setRequired(true)
+      )
+      .addStringOption(option =>
+        option.setName('hora')
+          .setDescription('Hora (ej: 20:00)')
+          .setRequired(true)
+      )
+      .addRoleOption(option =>
+        option.setName('rol')
+          .setDescription('Rol a mencionar')
+          .setRequired(true)
+      )
+  ].map(cmd => cmd.toJSON());
+
+  const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
+
+  try {
+    await rest.put(
+      Routes.applicationCommands(client.user.id),
+      { body: commands }
+    );
+
+    console.log('✅ Slash command /encuesta registrado automáticamente');
+  } catch (err) {
+    console.error('❌ Error registrando comandos:', err);
+  }
 });
 
+// ======================
+// INTERACCIONES
+// ======================
 client.on('interactionCreate', async interaction => {
 
-  // =========================
-  // SLASH COMMAND /encuesta
-  // =========================
+  // ======================
+  // COMANDO /encuesta
+  // ======================
   if (interaction.isChatInputCommand()) {
 
     if (interaction.commandName === 'encuesta') {
 
       if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
         return interaction.reply({
-          content: '❌ No tienes permisos para usar esto',
+          content: '❌ Solo administradores pueden usar esto',
           ephemeral: true
         });
       }
@@ -80,7 +121,7 @@ client.on('interactionCreate', async interaction => {
       );
 
       await interaction.reply({
-        content: `📊 **${texto}**\n⏰ Hora: ${hora}\n📌 Rol: ${rol}`,
+        content: `📊 **${texto}**\n⏰ Hora: ${hora}\n📌 ${rol}`,
         components: [row]
       });
 
@@ -88,36 +129,27 @@ client.on('interactionCreate', async interaction => {
     }
   }
 
-  // =========================
+  // ======================
   // BOTONES
-  // =========================
+  // ======================
   if (interaction.isButton()) {
 
     if (!encuesta) return;
 
     const user = interaction.user;
 
-    // eliminar de todas las listas (permite cambiar voto)
     encuesta.atiempo = encuesta.atiempo.filter(u => u.id !== user.id);
     encuesta.tarde = encuesta.tarde.filter(u => u.id !== user.id);
     encuesta.novengo = encuesta.novengo.filter(u => u.id !== user.id);
 
     if (interaction.customId === 'atiempo') {
       encuesta.atiempo.push(user);
-
-      return interaction.reply({
-        content: '✅ Registrado como A TIEMPO',
-        ephemeral: true
-      });
+      return interaction.reply({ content: '✅ A tiempo', ephemeral: true });
     }
 
     if (interaction.customId === 'novengo') {
       encuesta.novengo.push(user);
-
-      return interaction.reply({
-        content: '❌ Registrado como NO VENGO',
-        ephemeral: true
-      });
+      return interaction.reply({ content: '❌ No vengo', ephemeral: true });
     }
 
     if (interaction.customId === 'tarde') {
@@ -128,7 +160,7 @@ client.on('interactionCreate', async interaction => {
 
       const input = new TextInputBuilder()
         .setCustomId('motivo')
-        .setLabel('¿Por qué llegas tarde?')
+        .setLabel('Motivo')
         .setStyle(TextInputStyle.Paragraph)
         .setRequired(true);
 
@@ -140,9 +172,9 @@ client.on('interactionCreate', async interaction => {
     }
   }
 
-  // =========================
-  // MODAL (MOTIVO TARDE)
-  // =========================
+  // ======================
+  // MODAL
+  // ======================
   if (interaction.isModalSubmit()) {
 
     if (!encuesta) return;
@@ -150,23 +182,19 @@ client.on('interactionCreate', async interaction => {
     const user = interaction.user;
     const motivo = interaction.fields.getTextInputValue('motivo');
 
-    // limpiar otras opciones
     encuesta.atiempo = encuesta.atiempo.filter(u => u.id !== user.id);
     encuesta.novengo = encuesta.novengo.filter(u => u.id !== user.id);
 
     encuesta.tarde.push(user);
     encuesta.motivos[user.id] = motivo;
 
-    await interaction.reply({
-      content: '🟡 Registrado como TARDE',
-      ephemeral: true
-    });
+    await interaction.reply({ content: '🟡 Registrado como tarde', ephemeral: true });
   }
 });
 
-// =========================
-// RECORDATORIO 30 MIN ANTES
-// =========================
+// ======================
+// RECORDATORIO
+// ======================
 function programarRecordatorio(interaction, encuesta) {
   try {
 
@@ -187,8 +215,6 @@ function programarRecordatorio(interaction, encuesta) {
 
     setTimeout(() => {
 
-      if (!encuesta) return;
-
       const canal = interaction.channel;
 
       const lista = [
@@ -197,16 +223,13 @@ function programarRecordatorio(interaction, encuesta) {
       ];
 
       canal.send({
-        content:
-          `⏰ **RECORDATORIO**\n` +
-          `${encuesta.rol}\n\n` +
-          `👥 Asistirán:\n${lista.join('\n') || 'Nadie todavía'}`
+        content: `⏰ **RECORDATORIO**\n${encuesta.rol}\n\nAsistentes:\n${lista.join('\n') || 'Nadie'}`
       });
 
     }, delay);
 
   } catch (err) {
-    console.log('Error recordatorio:', err);
+    console.log(err);
   }
 }
 
