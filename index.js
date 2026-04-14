@@ -25,6 +25,11 @@ let encuesta = null;
 
 client.once('clientReady', () => {
   console.log(`✅ Bot conectado como ${client.user.tag}`);
+
+  // 🟢 mantiene el proceso activo (opcional)
+  setInterval(() => {
+    console.log("bot alive");
+  }, 60000);
 });
 
 client.on('interactionCreate', async interaction => {
