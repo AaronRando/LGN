@@ -66,52 +66,47 @@ client.on('interactionCreate', async interaction => {
     if (interaction.commandName === 'encuesta') {
 
       if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-        return interaction.reply({
-          content: '❌ Solo administradores',
-          ephemeral: true
+        return interaction.reply({ content: '❌ Solo admins', ephemeral: true });
+      }
+    
+      // 🟢 RESPONDER INMEDIATO (OBLIGATORIO)
+      await interaction.deferReply();
+    
+      try {
+        const texto = interaction.options.getString('texto');
+        const hora = interaction.options.getString('hora');
+        const rol = interaction.options.getRole('rol');
+    
+        encuesta = {
+          texto,
+          hora,
+          rol,
+          atiempo: [],
+          tarde: [],
+          novengo: [],
+          motivos: {}
+        };
+    
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId('atiempo').setLabel('✅ A tiempo').setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId('tarde').setLabel('🟡 Tarde').setStyle(ButtonStyle.Warning),
+          new ButtonBuilder().setCustomId('novengo').setLabel('❌ No vengo').setStyle(ButtonStyle.Danger)
+        );
+    
+        await interaction.editReply({
+          content: `📊 **${texto}**\n⏰ ${hora}\n📌 ${rol}`,
+          components: [row]
+        });
+    
+        programarRecordatorio(interaction, encuesta);
+    
+      } catch (err) {
+        console.log("ERROR /encuesta:", err);
+    
+        await interaction.editReply({
+          content: "❌ Error creando la encuesta"
         });
       }
-
-      const texto = interaction.options.getString('texto');
-      const hora = interaction.options.getString('hora');
-      const rol = interaction.options.getRole('rol');
-
-      encuesta = {
-        texto,
-        hora,
-        rol,
-        atiempo: [],
-        tarde: [],
-        novengo: [],
-        motivos: {}
-      };
-
-      const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId('atiempo')
-          .setLabel('✅ A tiempo')
-          .setStyle(ButtonStyle.Success),
-
-        new ButtonBuilder()
-          .setCustomId('tarde')
-          .setLabel('🟡 Tarde')
-          .setStyle(ButtonStyle.Warning),
-
-        new ButtonBuilder()
-          .setCustomId('novengo')
-          .setLabel('❌ No vengo')
-          .setStyle(ButtonStyle.Danger)
-      );
-
-      // 🔥 FIX IMPORTANTE: evitar timeout
-      await interaction.deferReply();
-
-      await interaction.editReply({
-        content: `📊 **${texto}**\n⏰ ${hora}\n📌 ${rol}`,
-        components: [row]
-      });
-
-      programarRecordatorio(interaction, encuesta);
     }
   }
 
