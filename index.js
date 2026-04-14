@@ -30,7 +30,6 @@ let encuesta = null;
 client.once('ready', async () => {
   console.log(`✅ Bot conectado como ${client.user.tag}`);
 
-  // 🔥 REGISTRO AUTOMÁTICO DEL COMANDO
   const commands = [
     new SlashCommandBuilder()
       .setName('encuesta')
@@ -38,9 +37,9 @@ client.once('ready', async () => {
       .addStringOption(o =>
         o.setName('texto').setDescription('Texto').setRequired(true))
       .addStringOption(o =>
-        o.setName('hora').setDescription('Hora (HH:MM)').setRequired(true))
+        o.setName('hora').setDescription('Hora HH:MM').setRequired(true))
       .addRoleOption(o =>
-        o.setName('rol').setDescription('Rol').setRequired(true))
+        o.setName('rol').setDescription('Rol a mencionar').setRequired(true))
   ].map(c => c.toJSON());
 
   const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
@@ -50,6 +49,7 @@ client.once('ready', async () => {
       Routes.applicationCommands(client.user.id),
       { body: commands }
     );
+
     console.log('✅ Slash command registrado');
   } catch (err) {
     console.log('❌ Error registrando comandos:', err);
@@ -82,37 +82,35 @@ client.on('interactionCreate', async interaction => {
       const hora = interaction.options.getString('hora');
       const rol = interaction.options.getRole('rol');
 
-      if (!texto || !hora || !rol) {
-        return interaction.editReply('❌ Faltan datos');
-      }
-
       encuesta = {
         texto,
         hora,
         rolId: rol.id,
         canalId: interaction.channel.id,
-        guildId: interaction.guild.id,
         atiempo: [],
         tarde: [],
         novengo: [],
         motivos: {}
       };
 
+      // ======================
+      // BOTONES (FIX REAL)
+      // ======================
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setCustomId('atiempo')
           .setLabel('✅ A tiempo')
-          .setStyle(ButtonStyle.Success),
+          .setStyle(3), // SUCCESS
 
         new ButtonBuilder()
           .setCustomId('tarde')
           .setLabel('🟡 Tarde')
-          .setStyle(ButtonStyle.Warning),
+          .setStyle(1), // PRIMARY
 
         new ButtonBuilder()
           .setCustomId('novengo')
           .setLabel('❌ No vengo')
-          .setStyle(ButtonStyle.Danger)
+          .setStyle(4) // DANGER
       );
 
       await interaction.editReply({
@@ -158,11 +156,11 @@ client.on('interactionCreate', async interaction => {
 
       const modal = new ModalBuilder()
         .setCustomId('motivoModal')
-        .setTitle('Motivo');
+        .setTitle('Motivo del retraso');
 
       const input = new TextInputBuilder()
         .setCustomId('motivo')
-        .setLabel('Motivo del retraso')
+        .setLabel('Motivo')
         .setStyle(TextInputStyle.Paragraph)
         .setRequired(true);
 
@@ -198,7 +196,7 @@ client.on('interactionCreate', async interaction => {
 });
 
 // ======================
-// RECORDATORIO SEGURO
+// RECORDATORIO
 // ======================
 function programarRecordatorio(client, encuesta) {
 
@@ -215,10 +213,7 @@ function programarRecordatorio(client, encuesta) {
 
     const delay = aviso - ahora;
 
-    if (delay <= 0) {
-      console.log("⏰ Aviso ya pasado");
-      return;
-    }
+    if (delay <= 0) return;
 
     setTimeout(() => {
 
@@ -234,7 +229,7 @@ function programarRecordatorio(client, encuesta) {
         content:
           `⏰ **RECORDATORIO**\n` +
           `<@&${encuesta.rolId}>\n\n` +
-          `${lista.join('\n') || 'Nadie ha confirmado'}`
+          `${lista.join('\n') || 'Nadie confirmado'}`
       });
 
     }, delay);
