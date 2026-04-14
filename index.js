@@ -10,22 +10,22 @@ const {
   TextInputStyle,
   REST,
   Routes,
-  SlashCommandBuilder
+  SlashCommandBuilder,
+  EmbedBuilder
 } = require('discord.js');
 
 require('dotenv').config();
 
-// ======================
-// CLIENTE
-// ======================
 const client = new Client({
   intents: [GatewayIntentBits.Guilds]
 });
 
 let encuesta = null;
+let messageId = null;
+let channelId = null;
 
 // ======================
-// READY
+// READY + COMANDOS
 // ======================
 client.once('ready', async () => {
   console.log(`✅ Bot conectado como ${client.user.tag}`);
@@ -33,13 +33,13 @@ client.once('ready', async () => {
   const commands = [
     new SlashCommandBuilder()
       .setName('encuesta')
-      .setDescription('Crear encuesta de asistencia')
+      .setDescription('Crear encuesta estilo Apollo')
       .addStringOption(o =>
         o.setName('texto').setDescription('Texto').setRequired(true))
       .addStringOption(o =>
         o.setName('hora').setDescription('Hora HH:MM').setRequired(true))
       .addRoleOption(o =>
-        o.setName('rol').setDescription('Rol a mencionar').setRequired(true))
+        o.setName('rol').setDescription('Rol').setRequired(true))
   ].map(c => c.toJSON());
 
   const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
@@ -49,12 +49,36 @@ client.once('ready', async () => {
       Routes.applicationCommands(client.user.id),
       { body: commands }
     );
-
     console.log('✅ Slash command registrado');
   } catch (err) {
-    console.log('❌ Error registrando comandos:', err);
+    console.log(err);
   }
 });
+
+// ======================
+// FORMATO MENSAJE (APOLLO STYLE)
+// ======================
+function buildMessage() {
+
+  return {
+    content:
+`📊 **${encuesta.texto}**
+⏰ ${encuesta.hora}
+📌 <@&${encuesta.rolId}>
+
+━━━━━━━━━━━━━━
+
+✅ **A tiempo (${encuesta.atiempo.length})**
+${encuesta.atiempo.map(u => `• ${u.username}`).join('\n') || 'Nadie'}
+
+🟡 **Tarde (${encuesta.tarde.length})**
+${encuesta.tarde.map(u => `• ${u.username}`).join('\n') || 'Nadie'}
+
+❌ **No vengo (${encuesta.novengo.length})**
+${encuesta.novengo.map(u => `• ${u.username}`).join('\n') || 'Nadie'}
+`
+  };
+}
 
 // ======================
 // INTERACCIONES
@@ -69,15 +93,13 @@ client.on('interactionCreate', async interaction => {
     if (interaction.commandName !== 'encuesta') return;
 
     if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-      return interaction.reply({
-        content: '❌ Solo administradores',
-        ephemeral: true
-      });
+      return interaction.reply({ content: '❌ Solo admins', ephemeral: true });
     }
 
     await interaction.deferReply();
 
     try {
+
       const texto = interaction.options.getString('texto');
       const hora = interaction.options.getString('hora');
       const rol = interaction.options.getRole('rol');
@@ -93,39 +115,37 @@ client.on('interactionCreate', async interaction => {
         motivos: {}
       };
 
-      // ======================
-      // BOTONES (FIX REAL)
-      // ======================
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setCustomId('atiempo')
           .setLabel('✅ A tiempo')
-          .setStyle(3), // SUCCESS
+          .setStyle(ButtonStyle.Success),
 
         new ButtonBuilder()
           .setCustomId('tarde')
           .setLabel('🟡 Tarde')
-          .setStyle(1), // PRIMARY
+          .setStyle(ButtonStyle.Primary),
 
         new ButtonBuilder()
           .setCustomId('novengo')
           .setLabel('❌ No vengo')
-          .setStyle(4) // DANGER
+          .setStyle(ButtonStyle.Danger)
       );
 
-      await interaction.editReply({
+      const msg = await interaction.editReply({
         content:
-          `📊 **${texto}**\n` +
-          `⏰ ${hora}\n` +
-          `📌 <@&${rol.id}>`,
+`📊 **${texto}**
+⏰ ${hora}
+📌 <@&${rol.id}>`,
         components: [row]
       });
 
-      programarRecordatorio(client, encuesta);
+      messageId = msg.id;
+      channelId = interaction.channel.id;
 
     } catch (err) {
-      console.log("❌ ERROR ENCUESTA:", err);
-      await interaction.editReply("❌ Error creando la encuesta");
+      console.log("ERROR:", err);
+      await interaction.editReply("❌ Error creando encuesta");
     }
   }
 
@@ -144,32 +164,36 @@ client.on('interactionCreate', async interaction => {
 
     if (interaction.customId === 'atiempo') {
       encuesta.atiempo.push(user);
-      return interaction.reply({ content: '✅ A tiempo', ephemeral: true });
+      await interaction.reply({ content: '✅ A tiempo', ephemeral: true });
     }
 
     if (interaction.customId === 'novengo') {
       encuesta.novengo.push(user);
-      return interaction.reply({ content: '❌ No vengo', ephemeral: true });
+      await interaction.reply({ content: '❌ No vengo', ephemeral: true });
     }
 
     if (interaction.customId === 'tarde') {
 
       const modal = new ModalBuilder()
-        .setCustomId('motivoModal')
+        .setCustomId('motivo')
         .setTitle('Motivo del retraso');
 
       const input = new TextInputBuilder()
-        .setCustomId('motivo')
+        .setCustomId('texto')
         .setLabel('Motivo')
         .setStyle(TextInputStyle.Paragraph)
         .setRequired(true);
 
-      modal.addComponents(
-        new ActionRowBuilder().addComponents(input)
-      );
+      modal.addComponents(new ActionRowBuilder().addComponents(input));
 
       await interaction.showModal(modal);
     }
+
+    // 🔥 ACTUALIZAR MENSAJE TIPO APOLLO
+    const channel = await client.channels.fetch(channelId);
+    const message = await channel.messages.fetch(messageId);
+
+    await message.edit(buildMessage());
   }
 
   // ======================
@@ -177,66 +201,19 @@ client.on('interactionCreate', async interaction => {
   // ======================
   if (interaction.isModalSubmit()) {
 
-    if (!encuesta) return;
+    const motivo = interaction.fields.getTextInputValue('texto');
 
-    const user = interaction.user;
-    const motivo = interaction.fields.getTextInputValue('motivo');
+    encuesta.tarde.push(interaction.user);
+    encuesta.motivos[interaction.user.id] = motivo;
 
-    encuesta.atiempo = encuesta.atiempo.filter(u => u.id !== user.id);
-    encuesta.novengo = encuesta.novengo.filter(u => u.id !== user.id);
+    await interaction.reply({ content: '🟡 Registrado como tarde', ephemeral: true });
 
-    encuesta.tarde.push(user);
-    encuesta.motivos[user.id] = motivo;
+    const channel = await client.channels.fetch(channelId);
+    const message = await channel.messages.fetch(messageId);
 
-    await interaction.reply({
-      content: '🟡 Registrado como tarde',
-      ephemeral: true
-    });
+    await message.edit(buildMessage());
   }
 });
 
 // ======================
-// RECORDATORIO
-// ======================
-function programarRecordatorio(client, encuesta) {
-
-  try {
-
-    const [h, m] = encuesta.hora.split(':').map(Number);
-
-    const ahora = new Date();
-    const evento = new Date();
-
-    evento.setHours(h, m, 0, 0);
-
-    const aviso = new Date(evento.getTime() - 30 * 60000);
-
-    const delay = aviso - ahora;
-
-    if (delay <= 0) return;
-
-    setTimeout(() => {
-
-      const canal = client.channels.cache.get(encuesta.canalId);
-      if (!canal) return;
-
-      const lista = [
-        ...encuesta.atiempo.map(u => `<@${u.id}>`),
-        ...encuesta.tarde.map(u => `<@${u.id}>`)
-      ];
-
-      canal.send({
-        content:
-          `⏰ **RECORDATORIO**\n` +
-          `<@&${encuesta.rolId}>\n\n` +
-          `${lista.join('\n') || 'Nadie confirmado'}`
-      });
-
-    }, delay);
-
-  } catch (err) {
-    console.log("❌ ERROR RECORDATORIO:", err);
-  }
-}
-
 client.login(process.env.TOKEN);
