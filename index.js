@@ -15,6 +15,9 @@ const {
 
 require('dotenv').config();
 
+// ======================
+// CLIENTE
+// ======================
 const client = new Client({
   intents: [GatewayIntentBits.Guilds]
 });
@@ -27,7 +30,7 @@ let encuesta = null;
 client.once('ready', async () => {
   console.log(`✅ Bot conectado como ${client.user.tag}`);
 
-  // REGISTRO SLASH COMMAND
+  // 🔥 REGISTRO AUTOMÁTICO DEL COMANDO
   const commands = [
     new SlashCommandBuilder()
       .setName('encuesta')
@@ -35,7 +38,7 @@ client.once('ready', async () => {
       .addStringOption(o =>
         o.setName('texto').setDescription('Texto').setRequired(true))
       .addStringOption(o =>
-        o.setName('hora').setDescription('Hora (20:00)').setRequired(true))
+        o.setName('hora').setDescription('Hora (HH:MM)').setRequired(true))
       .addRoleOption(o =>
         o.setName('rol').setDescription('Rol').setRequired(true))
   ].map(c => c.toJSON());
@@ -49,7 +52,7 @@ client.once('ready', async () => {
     );
     console.log('✅ Slash command registrado');
   } catch (err) {
-    console.log('❌ Error comandos:', err);
+    console.log('❌ Error registrando comandos:', err);
   }
 });
 
@@ -63,50 +66,68 @@ client.on('interactionCreate', async interaction => {
   // ======================
   if (interaction.isChatInputCommand()) {
 
-    if (interaction.commandName === 'encuesta') {
+    if (interaction.commandName !== 'encuesta') return;
 
-      if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-        return interaction.reply({ content: '❌ Solo admins', ephemeral: true });
+    if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+      return interaction.reply({
+        content: '❌ Solo administradores',
+        ephemeral: true
+      });
+    }
+
+    await interaction.deferReply();
+
+    try {
+      const texto = interaction.options.getString('texto');
+      const hora = interaction.options.getString('hora');
+      const rol = interaction.options.getRole('rol');
+
+      if (!texto || !hora || !rol) {
+        return interaction.editReply('❌ Faltan datos');
       }
-    
-      // 🟢 RESPONDER INMEDIATO (OBLIGATORIO)
-      await interaction.deferReply();
-    
-      try {
-        const texto = interaction.options.getString('texto');
-        const hora = interaction.options.getString('hora');
-        const rol = interaction.options.getRole('rol');
-    
-        encuesta = {
-          texto,
-          hora,
-          rol,
-          atiempo: [],
-          tarde: [],
-          novengo: [],
-          motivos: {}
-        };
-    
-        const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId('atiempo').setLabel('✅ A tiempo').setStyle(ButtonStyle.Success),
-          new ButtonBuilder().setCustomId('tarde').setLabel('🟡 Tarde').setStyle(ButtonStyle.Warning),
-          new ButtonBuilder().setCustomId('novengo').setLabel('❌ No vengo').setStyle(ButtonStyle.Danger)
-        );
-    
-        await interaction.editReply({
-          content: `📊 **${texto}**\n⏰ ${hora}\n📌 ${rol}`,
-          components: [row]
-        });
-    
-        programarRecordatorio(interaction, encuesta);
-    
-      } catch (err) {
-        console.log("ERROR /encuesta:", err);
-    
-        await interaction.editReply({
-          content: "❌ Error creando la encuesta"
-        });
-      }
+
+      encuesta = {
+        texto,
+        hora,
+        rolId: rol.id,
+        canalId: interaction.channel.id,
+        guildId: interaction.guild.id,
+        atiempo: [],
+        tarde: [],
+        novengo: [],
+        motivos: {}
+      };
+
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('atiempo')
+          .setLabel('✅ A tiempo')
+          .setStyle(ButtonStyle.Success),
+
+        new ButtonBuilder()
+          .setCustomId('tarde')
+          .setLabel('🟡 Tarde')
+          .setStyle(ButtonStyle.Warning),
+
+        new ButtonBuilder()
+          .setCustomId('novengo')
+          .setLabel('❌ No vengo')
+          .setStyle(ButtonStyle.Danger)
+      );
+
+      await interaction.editReply({
+        content:
+          `📊 **${texto}**\n` +
+          `⏰ ${hora}\n` +
+          `📌 <@&${rol.id}>`,
+        components: [row]
+      });
+
+      programarRecordatorio(client, encuesta);
+
+    } catch (err) {
+      console.log("❌ ERROR ENCUESTA:", err);
+      await interaction.editReply("❌ Error creando la encuesta");
     }
   }
 
@@ -177,9 +198,10 @@ client.on('interactionCreate', async interaction => {
 });
 
 // ======================
-// RECORDATORIO
+// RECORDATORIO SEGURO
 // ======================
-function programarRecordatorio(interaction, encuesta) {
+function programarRecordatorio(client, encuesta) {
+
   try {
 
     const [h, m] = encuesta.hora.split(':').map(Number);
@@ -187,17 +209,21 @@ function programarRecordatorio(interaction, encuesta) {
     const ahora = new Date();
     const evento = new Date();
 
-    evento.setHours(h, m, 0);
+    evento.setHours(h, m, 0, 0);
 
     const aviso = new Date(evento.getTime() - 30 * 60000);
 
     const delay = aviso - ahora;
 
-    if (delay <= 0) return;
+    if (delay <= 0) {
+      console.log("⏰ Aviso ya pasado");
+      return;
+    }
 
     setTimeout(() => {
 
-      const canal = interaction.channel;
+      const canal = client.channels.cache.get(encuesta.canalId);
+      if (!canal) return;
 
       const lista = [
         ...encuesta.atiempo.map(u => `<@${u.id}>`),
@@ -205,13 +231,16 @@ function programarRecordatorio(interaction, encuesta) {
       ];
 
       canal.send({
-        content: `⏰ **RECORDATORIO**\n${encuesta.rol}\n\n${lista.join('\n') || 'Nadie'}`
+        content:
+          `⏰ **RECORDATORIO**\n` +
+          `<@&${encuesta.rolId}>\n\n` +
+          `${lista.join('\n') || 'Nadie ha confirmado'}`
       });
 
     }, delay);
 
   } catch (err) {
-    console.log(err);
+    console.log("❌ ERROR RECORDATORIO:", err);
   }
 }
 
