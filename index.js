@@ -15,46 +15,30 @@ const {
 
 require('dotenv').config();
 
-// ======================
-// CLIENTE DISCORD
-// ======================
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds
-  ]
+  intents: [GatewayIntentBits.Guilds]
 });
 
 let encuesta = null;
 
 // ======================
-// CUANDO EL BOT ESTÁ LISTO
+// READY
 // ======================
 client.once('ready', async () => {
   console.log(`✅ Bot conectado como ${client.user.tag}`);
 
-  // ======================
-  // REGISTRO AUTOMÁTICO DE SLASH COMMAND
-  // ======================
+  // REGISTRO SLASH COMMAND
   const commands = [
     new SlashCommandBuilder()
       .setName('encuesta')
       .setDescription('Crear encuesta de asistencia')
-      .addStringOption(option =>
-        option.setName('texto')
-          .setDescription('Texto de la encuesta')
-          .setRequired(true)
-      )
-      .addStringOption(option =>
-        option.setName('hora')
-          .setDescription('Hora (ej: 20:00)')
-          .setRequired(true)
-      )
-      .addRoleOption(option =>
-        option.setName('rol')
-          .setDescription('Rol a mencionar')
-          .setRequired(true)
-      )
-  ].map(cmd => cmd.toJSON());
+      .addStringOption(o =>
+        o.setName('texto').setDescription('Texto').setRequired(true))
+      .addStringOption(o =>
+        o.setName('hora').setDescription('Hora (20:00)').setRequired(true))
+      .addRoleOption(o =>
+        o.setName('rol').setDescription('Rol').setRequired(true))
+  ].map(c => c.toJSON());
 
   const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 
@@ -63,10 +47,9 @@ client.once('ready', async () => {
       Routes.applicationCommands(client.user.id),
       { body: commands }
     );
-
-    console.log('✅ Slash command /encuesta registrado automáticamente');
+    console.log('✅ Slash command registrado');
   } catch (err) {
-    console.error('❌ Error registrando comandos:', err);
+    console.log('❌ Error comandos:', err);
   }
 });
 
@@ -76,7 +59,7 @@ client.once('ready', async () => {
 client.on('interactionCreate', async interaction => {
 
   // ======================
-  // COMANDO /encuesta
+  // /encuesta
   // ======================
   if (interaction.isChatInputCommand()) {
 
@@ -84,7 +67,7 @@ client.on('interactionCreate', async interaction => {
 
       if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
         return interaction.reply({
-          content: '❌ Solo administradores pueden usar esto',
+          content: '❌ Solo administradores',
           ephemeral: true
         });
       }
@@ -120,8 +103,11 @@ client.on('interactionCreate', async interaction => {
           .setStyle(ButtonStyle.Danger)
       );
 
-      await interaction.reply({
-        content: `📊 **${texto}**\n⏰ Hora: ${hora}\n📌 ${rol}`,
+      // 🔥 FIX IMPORTANTE: evitar timeout
+      await interaction.deferReply();
+
+      await interaction.editReply({
+        content: `📊 **${texto}**\n⏰ ${hora}\n📌 ${rol}`,
         components: [row]
       });
 
@@ -156,11 +142,11 @@ client.on('interactionCreate', async interaction => {
 
       const modal = new ModalBuilder()
         .setCustomId('motivoModal')
-        .setTitle('Motivo del retraso');
+        .setTitle('Motivo');
 
       const input = new TextInputBuilder()
         .setCustomId('motivo')
-        .setLabel('Motivo')
+        .setLabel('Motivo del retraso')
         .setStyle(TextInputStyle.Paragraph)
         .setRequired(true);
 
@@ -188,7 +174,10 @@ client.on('interactionCreate', async interaction => {
     encuesta.tarde.push(user);
     encuesta.motivos[user.id] = motivo;
 
-    await interaction.reply({ content: '🟡 Registrado como tarde', ephemeral: true });
+    await interaction.reply({
+      content: '🟡 Registrado como tarde',
+      ephemeral: true
+    });
   }
 });
 
@@ -203,9 +192,7 @@ function programarRecordatorio(interaction, encuesta) {
     const ahora = new Date();
     const evento = new Date();
 
-    evento.setHours(h);
-    evento.setMinutes(m);
-    evento.setSeconds(0);
+    evento.setHours(h, m, 0);
 
     const aviso = new Date(evento.getTime() - 30 * 60000);
 
@@ -223,7 +210,7 @@ function programarRecordatorio(interaction, encuesta) {
       ];
 
       canal.send({
-        content: `⏰ **RECORDATORIO**\n${encuesta.rol}\n\nAsistentes:\n${lista.join('\n') || 'Nadie'}`
+        content: `⏰ **RECORDATORIO**\n${encuesta.rol}\n\n${lista.join('\n') || 'Nadie'}`
       });
 
     }, delay);
