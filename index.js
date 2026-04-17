@@ -1,219 +1,213 @@
 const {
-  Client,
-  GatewayIntentBits,
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  PermissionsBitField,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
-  REST,
-  Routes,
-  SlashCommandBuilder,
-  EmbedBuilder
+  Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle,
+  PermissionsBitField, ModalBuilder, TextInputBuilder, TextInputStyle,
+  REST, Routes, SlashCommandBuilder
 } = require('discord.js');
-
+const http = require('http');
 require('dotenv').config();
 
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds]
-});
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-let encuesta = null;
-let messageId = null;
-let channelId = null;
+const encuestas = new Map();
 
-// ======================
-// READY + COMANDOS
-// ======================
-client.once('ready', async () => {
+// ── Servidor HTTP (Glitch lo necesita para mantenerse vivo) ───────────────────
+http.createServer((req, res) => {
+  res.writeHead(200);
+  res.end('Bot activo');
+}).listen(3000, () => console.log('🌐 Servidor HTTP escuchando en puerto 3000'));
+
+// ── Registro de comandos slash ────────────────────────────────────────────────
+client.once('clientReady', async () => {
   console.log(`✅ Bot conectado como ${client.user.tag}`);
 
   const commands = [
     new SlashCommandBuilder()
       .setName('encuesta')
-      .setDescription('Crear encuesta estilo Apollo')
-      .addStringOption(o =>
-        o.setName('texto').setDescription('Texto').setRequired(true))
-      .addStringOption(o =>
-        o.setName('hora').setDescription('Hora HH:MM').setRequired(true))
-      .addRoleOption(o =>
-        o.setName('rol').setDescription('Rol').setRequired(true))
+      .setDescription('Crear encuesta de asistencia')
+      .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator)
+      .addStringOption(o => o.setName('texto').setDescription('Texto del evento').setRequired(true))
+      .addStringOption(o => o.setName('hora').setDescription('Hora HH:MM').setRequired(true))
+      .addRoleOption(o => o.setName('rol').setDescription('Rol a mencionar').setRequired(true))
   ].map(c => c.toJSON());
 
   const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
-
   try {
-    await rest.put(
-      Routes.applicationCommands(client.user.id),
-      { body: commands }
-    );
-    console.log('✅ Slash command registrado');
+    await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
+    console.log('✅ Comandos slash registrados');
   } catch (err) {
-    console.log(err);
+    console.error('❌ Error registrando comandos:', err);
   }
 });
 
-// ======================
-// FORMATO MENSAJE (APOLLO STYLE)
-// ======================
-function buildMessage() {
+// ── Construye el mensaje ──────────────────────────────────────────────────────
+function buildMessage(enc) {
+  const lista = arr =>
+    arr.length === 0
+      ? 'Nadie'
+      : arr.map(u => `• ${u.displayName}${enc.motivos[u.id] ? ` *(${enc.motivos[u.id]})*` : ''}`).join('\n');
 
   return {
     content:
-`📊 **${encuesta.texto}**
-⏰ ${encuesta.hora}
-📌 <@&${encuesta.rolId}>
+`📊 **${enc.texto}**
+⏰ ${enc.hora}
+📌 <@&${enc.rolId}>
 
 ━━━━━━━━━━━━━━
 
-✅ **A tiempo (${encuesta.atiempo.length})**
-${encuesta.atiempo.map(u => `• ${u.username}`).join('\n') || 'Nadie'}
+✅ **A tiempo (${enc.atiempo.length})**
+${lista(enc.atiempo)}
 
-🟡 **Tarde (${encuesta.tarde.length})**
-${encuesta.tarde.map(u => `• ${u.username}`).join('\n') || 'Nadie'}
+🟡 **Tarde (${enc.tarde.length})**
+${lista(enc.tarde)}
 
-❌ **No vengo (${encuesta.novengo.length})**
-${encuesta.novengo.map(u => `• ${u.username}`).join('\n') || 'Nadie'}
-`
+❌ **No vengo (${enc.novengo.length})**
+${lista(enc.novengo)}`,
+    components: [buildRow()]
   };
 }
 
-// ======================
-// INTERACCIONES
-// ======================
+function buildRow() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('atiempo').setLabel('✅ A tiempo').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId('tarde').setLabel('🟡 Tarde').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('novengo').setLabel('❌ No vengo').setStyle(ButtonStyle.Danger)
+  );
+}
+
+function quitarUsuario(enc, userId) {
+  enc.atiempo = enc.atiempo.filter(u => u.id !== userId);
+  enc.tarde   = enc.tarde.filter(u => u.id !== userId);
+  enc.novengo = enc.novengo.filter(u => u.id !== userId);
+  delete enc.motivos[userId];
+}
+
+// ── Interacciones ─────────────────────────────────────────────────────────────
 client.on('interactionCreate', async interaction => {
 
-  // ======================
   // /encuesta
-  // ======================
-  if (interaction.isChatInputCommand()) {
-
-    if (interaction.commandName !== 'encuesta') return;
-
+  if (interaction.isChatInputCommand() && interaction.commandName === 'encuesta') {
     if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-      return interaction.reply({ content: '❌ Solo admins', ephemeral: true });
+      return interaction.reply({ content: '❌ Solo los administradores pueden crear encuestas.', ephemeral: true });
     }
 
     await interaction.deferReply();
 
     try {
-
       const texto = interaction.options.getString('texto');
-      const hora = interaction.options.getString('hora');
-      const rol = interaction.options.getRole('rol');
+      const hora  = interaction.options.getString('hora');
+      const rol   = interaction.options.getRole('rol');
 
-      encuesta = {
-        texto,
-        hora,
-        rolId: rol.id,
-        canalId: interaction.channel.id,
-        atiempo: [],
-        tarde: [],
-        novengo: [],
-        motivos: {}
-      };
-
-      const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId('atiempo')
-          .setLabel('✅ A tiempo')
-          .setStyle(ButtonStyle.Success),
-
-        new ButtonBuilder()
-          .setCustomId('tarde')
-          .setLabel('🟡 Tarde')
-          .setStyle(ButtonStyle.Primary),
-
-        new ButtonBuilder()
-          .setCustomId('novengo')
-          .setLabel('❌ No vengo')
-          .setStyle(ButtonStyle.Danger)
-      );
+      const enc = { texto, hora, rolId: rol.id, atiempo: [], tarde: [], novengo: [], motivos: {} };
 
       const msg = await interaction.editReply({
         content:
 `📊 **${texto}**
 ⏰ ${hora}
-📌 <@&${rol.id}>`,
-        components: [row]
+📌 <@&${rol.id}>
+
+━━━━━━━━━━━━━━
+
+✅ **A tiempo (0)**
+Nadie
+
+🟡 **Tarde (0)**
+Nadie
+
+❌ **No vengo (0)**
+Nadie`,
+        components: [buildRow()]
       });
 
-      messageId = msg.id;
-      channelId = interaction.channel.id;
+      encuestas.set(msg.id, enc);
 
     } catch (err) {
-      console.log("ERROR:", err);
-      await interaction.editReply("❌ Error creando encuesta");
+      console.error('ERROR creando encuesta:', err);
+      await interaction.editReply('❌ Error al crear la encuesta.');
     }
+    return;
   }
 
-  // ======================
-  // BOTONES
-  // ======================
+  // Botones
   if (interaction.isButton()) {
-
-    if (!encuesta) return;
+    const enc = encuestas.get(interaction.message.id);
+    if (!enc) {
+      return interaction.reply({ content: '❌ Encuesta no disponible (el bot se reinició).', ephemeral: true });
+    }
 
     const user = interaction.user;
+    const userObj = {
+      id: user.id,
+      displayName: interaction.member?.displayName || user.username
+    };
 
-    encuesta.atiempo = encuesta.atiempo.filter(u => u.id !== user.id);
-    encuesta.tarde = encuesta.tarde.filter(u => u.id !== user.id);
-    encuesta.novengo = encuesta.novengo.filter(u => u.id !== user.id);
+    quitarUsuario(enc, user.id);
 
     if (interaction.customId === 'atiempo') {
-      encuesta.atiempo.push(user);
-      await interaction.reply({ content: '✅ A tiempo', ephemeral: true });
+      enc.atiempo.push(userObj);
+      await interaction.reply({ content: '✅ Registrado como **a tiempo**.', ephemeral: true });
+      await interaction.message.edit(buildMessage(enc));
+      return;
     }
 
     if (interaction.customId === 'novengo') {
-      encuesta.novengo.push(user);
-      await interaction.reply({ content: '❌ No vengo', ephemeral: true });
+      enc.novengo.push(userObj);
+      await interaction.reply({ content: '❌ Registrado como **no vengo**.', ephemeral: true });
+      await interaction.message.edit(buildMessage(enc));
+      return;
     }
 
     if (interaction.customId === 'tarde') {
+      if (!enc._pendingTarde) enc._pendingTarde = {};
+      enc._pendingTarde[user.id] = userObj;
 
       const modal = new ModalBuilder()
-        .setCustomId('motivo')
+        .setCustomId(`motivo_${interaction.message.id}`)
         .setTitle('Motivo del retraso');
 
-      const input = new TextInputBuilder()
-        .setCustomId('texto')
-        .setLabel('Motivo')
-        .setStyle(TextInputStyle.Paragraph)
-        .setRequired(true);
+      modal.addComponents(new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('texto')
+          .setLabel('¿Por qué llegas tarde?')
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMaxLength(200)
+      ));
 
-      modal.addComponents(new ActionRowBuilder().addComponents(input));
-
-      await interaction.showModal(modal);
+      return interaction.showModal(modal);
     }
-
-    // 🔥 ACTUALIZAR MENSAJE TIPO APOLLO
-    const channel = await client.channels.fetch(channelId);
-    const message = await channel.messages.fetch(messageId);
-
-    await message.edit(buildMessage());
   }
 
-  // ======================
-  // MODAL
-  // ======================
-  if (interaction.isModalSubmit()) {
+  // Modal motivo tardanza
+  if (interaction.isModalSubmit() && interaction.customId.startsWith('motivo_')) {
+    const messageId = interaction.customId.replace('motivo_', '');
+    const enc = encuestas.get(messageId);
+    if (!enc) {
+      return interaction.reply({ content: '❌ Encuesta no disponible.', ephemeral: true });
+    }
 
-    const motivo = interaction.fields.getTextInputValue('texto');
+    const motivo  = interaction.fields.getTextInputValue('texto');
+    const user    = interaction.user;
+    const userObj = enc._pendingTarde?.[user.id] || {
+      id: user.id,
+      displayName: interaction.member?.displayName || user.username
+    };
 
-    encuesta.tarde.push(interaction.user);
-    encuesta.motivos[interaction.user.id] = motivo;
+    if (enc._pendingTarde) delete enc._pendingTarde[user.id];
 
-    await interaction.reply({ content: '🟡 Registrado como tarde', ephemeral: true });
+    quitarUsuario(enc, user.id);
+    enc.tarde.push(userObj);
+    enc.motivos[user.id] = motivo;
 
-    const channel = await client.channels.fetch(channelId);
-    const message = await channel.messages.fetch(messageId);
+    await interaction.reply({ content: `🟡 Registrado como **tarde**.\n📝 Motivo: *${motivo}*`, ephemeral: true });
 
-    await message.edit(buildMessage());
+    try {
+      const channel = await client.channels.fetch(interaction.channelId);
+      const message = await channel.messages.fetch(messageId);
+      await message.edit(buildMessage(enc));
+    } catch (err) {
+      console.error('Error editando mensaje tras modal:', err);
+    }
   }
 });
 
-// ======================
 client.login(process.env.TOKEN);
